@@ -1,0 +1,295 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// INSTITUCIÓN / CLÍNICA
+// ==========================================
+model Clinic {
+  id          String   @id @default(uuid())
+  name        String
+  taxId       String?  // CUIT / RUT / Identificador fiscal
+  phone       String?
+  email       String?
+  address     String?
+  city        String?
+  facilityType String? // "Policonsultorio", "Clínica Privada", "Sanatorio", "Centro de Diagnóstico"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  invitations Invitation[]
+  referrals   Referral[]
+}
+
+// ==========================================
+// USUARIOS Y CONTROL DE ACCESO (RBAC)
+// ==========================================
+model User {
+  id                String    @id @default(uuid())
+  clinicId          String?
+  clinic            Clinic?   @relation(fields: [clinicId], references: [id])
+  email             String    @unique
+  password          String
+  name              String
+  role              String    // "ADMIN", "MEDICO", "ENFERMERO", "RECEPCION", "FARMACIA"
+  department        String?   // "Dirección Médica", "Cardiología", "Enfermería", "Pediatría", "Guardia / Urgencias", "Farmacia", "Recepción / Admisión"
+  isDepartmentHead  Boolean   @default(false) // Si es Jefe/a de Departamento (ej: Jefa de Enfermería, Jefe de Cardiología)
+  positionTitle     String?   // Cargo específico: "Jefa de Enfermería", "Médico de Planta", etc.
+  specialty         String?   // Ej: "Cardiología", "Pediatría", "Clínica Médica"
+  licenseNumber     String?   // Matrícula Profesional MN/MP
+  phone             String?
+  active            Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relaciones
+  doctorAppointments  Appointment[]       @relation("DoctorAppointments")
+  consultations       ConsultationEntry[]
+  vitalSignsRecorded  VitalSigns[]
+  timeClockEntries    TimeClockEntry[]
+  onCallShifts        OnCallShift[]
+  inventoryMovements  InventoryMovement[]
+  createdInvitations  Invitation[]        @relation("CreatedInvitations")
+  referralsRequested  Referral[]          @relation("ReferralsRequested")
+  referralsReceived   Referral[]          @relation("ReferralsReceived")
+}
+
+// ==========================================
+// INVITACIONES A EMPLEADOS POR SUPERIORES
+// ==========================================
+model Invitation {
+  id               String    @id @default(uuid())
+  token            String    @unique // Código criptográfico para el link
+  clinicId         String
+  clinic           Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  createdById      String
+  createdBy        User      @relation("CreatedInvitations", fields: [createdById], references: [id])
+  invitedEmail     String?
+  recipientName    String?
+  role             String    // "MEDICO", "ENFERMERO", "RECEPCION", "FARMACIA", "ADMIN"
+  department       String    // Preasignado por el superior
+  positionTitle    String?   // Cargo premarcado: "Enfermero/a de Piso", etc.
+  isDepartmentHead Boolean   @default(false)
+  status           String    @default("PENDIENTE") // "PENDIENTE", "ACEPTADA", "REVOCADA", "EXPIRADA"
+  expiresAt        DateTime
+  acceptedAt       DateTime?
+  acceptedUserId   String?
+  createdAt        DateTime  @default(now())
+}
+
+// ==========================================
+// DERIVACIONES A OTRO HOSPITAL / ESPECIALISTA
+// ==========================================
+model Referral {
+  id                    String   @id @default(uuid())
+  clinicId              String?
+  clinic                Clinic?  @relation(fields: [clinicId], references: [id])
+  patientId             String
+  patient               Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  referringDoctorId     String
+  referringDoctor       User     @relation("ReferralsRequested", fields: [referringDoctorId], references: [id])
+  type                  String   @default("EXTERNA") // "INTERNA" | "EXTERNA"
+  targetDoctorId        String?  // Doctor asignado en interconsulta interna
+  targetDoctor          User?    @relation("ReferralsReceived", fields: [targetDoctorId], references: [id])
+  destinationFacility   String   // Hospital/Centro de destino o "Clínica MediSync (Interna)"
+  destinationDepartment String   // Departamento / Servicio de destino
+  specialistName        String?  // Nombre del especialista si aplica
+  reason                String   // Motivo de derivación / interconsulta
+  clinicalSummary       String   // Resumen clínico y cuadro actual
+  urgency               String   @default("PROGRAMADA") // "URGENTE", "PRIORITARIA", "PROGRAMADA"
+  transportType         String?  // "AMBULANCIA_UTIM", "AMBULANCIA_COMUN", "POR_SUS_MEDIOS", "CONSULTORIO_INTERNO", "INTERCONSULTA_GUARDIA", "PASE_SALA"
+  status                String   @default("PENDIENTE") // "PENDIENTE", "ACEPTADA", "EN_ATENCION", "EN_TRASLADO", "COMPLETADA", "RECHAZADA"
+  notes                 String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// ==========================================
+// PACIENTES Y DATOS FILIATORIOS
+// ==========================================
+model Patient {
+  id                String    @id @default(uuid())
+  documentId        String    @unique // DNI / Pasaporte
+  firstName         String
+  lastName          String
+  birthDate         DateTime
+  gender            String    // "M", "F", "OTRO"
+  phone             String
+  email             String?
+  address           String?
+  bloodType         String?   // "A+", "O+", "B-", etc.
+  healthInsurance   String?   // Obra Social o Prepaga
+  insuranceNumber   String?   // N° de carnet / afiliado
+  emergencyContact  String?
+  allergies         String?   // Resumen rápido de alergias
+  chronicConditions String?   // Hipertensión, Diabetes, Asma...
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relaciones
+  clinicalRecord    ClinicalRecord?
+  appointments      Appointment[]
+  vitalSigns        VitalSigns[]
+  referrals         Referral[]
+}
+
+// ==========================================
+// HISTORIAS CLÍNICAS ELECTRÓNICAS (EHR / HCE)
+// ==========================================
+model ClinicalRecord {
+  id               String              @id @default(uuid())
+  patientId        String              @unique
+  patient          Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  bloodType        String?
+  allergiesSummary String?
+  chronicSummary   String?
+  surgicalHistory  String?
+  familyHistory    String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  entries          ConsultationEntry[]
+}
+
+model ConsultationEntry {
+  id             String         @id @default(uuid())
+  recordId       String
+  record         ClinicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  doctorId       String
+  doctor         User           @relation(fields: [doctorId], references: [id])
+  appointmentId  String?
+  reason         String         // Motivo de consulta
+  anamnesis      String         // Antecedentes y enfermedad actual
+  physicalExam   String?        // Examen físico
+  diagnosis      String         // Diagnóstico clínico
+  diagnosisCode  String?        // Código CIE-10 (ej: I10, J00)
+  treatmentPlan  String         // Indicaciones y plan
+  createdAt      DateTime       @default(now())
+
+  prescriptions  Prescription[]
+}
+
+model VitalSigns {
+  id                String   @id @default(uuid())
+  patientId         String
+  patient           Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  recordedById      String
+  recordedBy        User     @relation(fields: [recordedById], references: [id])
+  systolicPressure  Int?     // mmHg
+  diastolicPressure Int?     // mmHg
+  heartRate         Int?     // bpm
+  temperature       Float?   // °C
+  oxygenSaturation  Int?     // % SpO2
+  glucose           Int?     // mg/dL
+  weight            Float?   // kg
+  height            Float?   // cm
+  nursingNotes      String?  // Notas de enfermería / Triaje
+  createdAt         DateTime @default(now())
+}
+
+model Prescription {
+  id           String            @id @default(uuid())
+  entryId      String
+  entry        ConsultationEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  medication   String            // Nombre de fármaco y concentración
+  dosage       String            // Posología
+  quantity     String?           // Cantidad prescripta
+  instructions String?           // Indicaciones especiales
+  status       String            @default("ACTIVA") // "ACTIVA", "DISPENSADA", "VENCIDA"
+  createdAt    DateTime          @default(now())
+}
+
+// ==========================================
+// TURNOS Y GUARDÍAS MÉDICAS
+// ==========================================
+model Appointment {
+  id              String   @id @default(uuid())
+  patientId       String
+  patient         Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId        String
+  doctor          User     @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  dateTime        DateTime
+  durationMinutes Int      @default(20)
+  reason          String
+  consultingRoom  String?  // Ej: "Consultorio 3", "Ecografía"
+  status          String   @default("RESERVADO") 
+  // Estados: RESERVADO, CONFIRMADO, EN_ESPERA, EN_CONSULTA, COMPLETADO, CANCELADO, AUSENTE
+  receptionNotes  String?
+  reminderSent24h Boolean  @default(false)
+  bookedVia       String   @default("RECEPCION") // "RECEPCION", "PORTAL", "BOT_WHATSAPP"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model OnCallShift {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  serviceArea   String   // "Guardia General", "Pediatría", "Traumatología", "Enfermería Central"
+  startDateTime DateTime
+  endDateTime   DateTime
+  status        String   @default("PROGRAMADA") // PROGRAMADA, EN_CURSO, COMPLETADA, CANCELADA
+  notes         String?
+  createdAt     DateTime @default(now())
+}
+
+model TimeClockEntry {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  clockIn       DateTime
+  clockOut      DateTime?
+  durationHours Float?
+  deviceOrIp    String?
+  shiftType     String    @default("CONSULTORIO") // "GUARDIA", "CONSULTORIO", "ENFERMERIA"
+  notes         String?
+  createdAt     DateTime  @default(now())
+}
+
+// ==========================================
+// INVENTARIO DE INSUMOS Y FARMACIA
+// ==========================================
+model InventoryItem {
+  id            String              @id @default(uuid())
+  name          String
+  code          String              @unique // SKU o Código de barras
+  category      String              // "DESCARTABLE", "MEDICAMENTO", "MATERIAL_CURACION", "SOLUCION"
+  unit          String              // "unidad", "caja", "ampolla", "frasco"
+  minStockAlert Int                 @default(10)
+  currentStock  Int                 @default(0)
+  location      String?             // Ubicación en depósito/farmacia
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  batches       StockBatch[]
+  movements     InventoryMovement[]
+}
+
+model StockBatch {
+  id                String        @id @default(uuid())
+  itemId            String
+  item              InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  batchNumber       String
+  expirationDate    DateTime
+  initialQuantity   Int
+  remainingQuantity Int
+  createdAt         DateTime      @default(now())
+}
+
+model InventoryMovement {
+  id        String        @id @default(uuid())
+  itemId    String
+  item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?         @relation(fields: [userId], references: [id])
+  type      String        // "INGRESO", "EGRESO_CONSULTA", "EGRESO_GUARDIA", "AJUSTE_MERMA"
+  quantity  Int
+  reference String?       // Motivo, paciente o factura
+  createdAt DateTime      @default(now())
+}

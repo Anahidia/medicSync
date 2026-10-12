@@ -1,0 +1,215 @@
+{
+  "name": "MediSync - Flujo Completo Agente IA y Recordatorios WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "medisync-whatsapp-incoming",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-incoming",
+      "name": "Webhook Mensaje WhatsApp",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Eres el asistente virtual con IA de MediSync Policonsultorios. El paciente escribe: {{ $json.body.message || $json.body.text }}\nTeléfono del paciente: {{ $json.body.from || $json.body.phone }}\n\nTu objetivo es:\n1. Si pregunta por turnos o doctores: Usar la herramienta 'ConsultarDisponibilidad'.\n2. Si desea agendar: Solicitar DNI, Nombre y Apellido, y usar la herramienta 'AgendarTurno'.\n3. Si desea cancelar: Solicitar DNI y usar 'CancelarTurno'.\nResponde siempre con tono cálido, profesional y conciso.",
+        "hasOutputParser": false
+      },
+      "id": "ai-agent",
+      "name": "Agente IA MediSync (LangChain)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "gpt-4o-mini",
+        "options": {}
+      },
+      "id": "openai-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        460,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "name": "ConsultarDisponibilidad",
+        "description": "Consulta turnos libres por especialidad médica (ej: Cardiología, Pediatría) o profesional",
+        "method": "GET",
+        "url": "http://localhost:3000/api/bot/check-availability",
+        "sendQuery": true,
+        "parametersQuery": {
+          "values": [
+            {
+              "name": "specialty",
+              "value": "={{ $fromAI('specialty', 'Especialidad médica solicitada') }}"
+            }
+          ]
+        }
+      },
+      "id": "tool-availability",
+      "name": "Tool: Consultar Disponibilidad",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "name": "AgendarTurno",
+        "description": "Agenda un turno confirmado en MediSync",
+        "method": "POST",
+        "url": "http://localhost:3000/api/bot/book-appointment",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"documentId\": \"{{ $fromAI('documentId') }}\",\n  \"firstName\": \"{{ $fromAI('firstName') }}\",\n  \"lastName\": \"{{ $fromAI('lastName') }}\",\n  \"phone\": \"{{ $fromAI('phone') }}\",\n  \"doctorId\": \"{{ $fromAI('doctorId') }}\",\n  \"dateTime\": \"{{ $fromAI('dateTime') }}\",\n  \"reason\": \"Consulta agendada por Bot WhatsApp\"\n}"
+      },
+      "id": "tool-book",
+      "name": "Tool: Agendar Turno",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "name": "CancelarTurno",
+        "description": "Cancela un turno próximo de un paciente mediante su DNI",
+        "method": "POST",
+        "url": "http://localhost:3000/api/bot/cancel-appointment",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"documentId\": \"{{ $fromAI('documentId') }}\"\n}"
+      },
+      "id": "tool-cancel",
+      "name": "Tool: Cancelar Turno",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-reminders",
+      "name": "Cron Diario 08:00 AM (Recordatorios 24h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:3000/api/bot/reminders",
+        "options": {}
+      },
+      "id": "http-fetch-reminders",
+      "name": "Consultar Recordatorios Pendientes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        720
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Mensaje WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Agente IA MediSync (LangChain)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente IA MediSync (LangChain)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Consultar Disponibilidad": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agente IA MediSync (LangChain)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Agendar Turno": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agente IA MediSync (LangChain)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Cancelar Turno": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agente IA MediSync (LangChain)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Diario 08:00 AM (Recordatorios 24h)": {
+      "main": [
+        [
+          {
+            "node": "Consultar Recordatorios Pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
