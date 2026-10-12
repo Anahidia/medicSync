@@ -3,18 +3,21 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useTimeclock } from '@/context/TimeclockContext';
 import { UserRole } from '@/types/auth';
 import { Clock, ShieldCheck, UserCheck, Play, Square, AlertCircle, LogOut } from 'lucide-react';
 
 export default function Header() {
   const router = useRouter();
   const { user, role, switchRole, logout, permissions } = useAuth();
+  const {
+    isClockedIn,
+    formattedElapsed,
+    clockLoading,
+    clockIn,
+    clockOut,
+  } = useTimeclock();
   const [time, setTime] = useState<string>('');
-  const [clockStatus, setClockStatus] = useState<{ isClockedIn: boolean; activeEntry?: any }>({
-    isClockedIn: false,
-  });
-  const [clockLoading, setClockLoading] = useState(false);
-  const [elapsedMinutes, setElapsedMinutes] = useState(0);
 
   // Reloj en tiempo real
   useEffect(() => {
@@ -33,61 +36,12 @@ export default function Header() {
     return () => clearInterval(interval);
   }, []);
 
-  // Consultar estado de fichaje
-  const fetchClockStatus = async () => {
-    try {
-      const res = await fetch('/api/timeclock');
-      if (res.ok) {
-        const data = await res.json();
-        setClockStatus(data);
-        if (data.isClockedIn && data.activeEntry?.clockIn) {
-          const diffMs = Date.now() - new Date(data.activeEntry.clockIn).getTime();
-          setElapsedMinutes(Math.floor(diffMs / 60000));
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  useEffect(() => {
-    if (user) {
-      fetchClockStatus();
-      const interval = setInterval(fetchClockStatus, 30000);
-      return () => clearInterval(interval);
-    }
-  }, [user]);
-
-  // Actualizar minutos transcurridos de fichada activa
-  useEffect(() => {
-    if (clockStatus.isClockedIn && clockStatus.activeEntry?.clockIn) {
-      const timer = setInterval(() => {
-        const diffMs = Date.now() - new Date(clockStatus.activeEntry.clockIn).getTime();
-        setElapsedMinutes(Math.floor(diffMs / 60000));
-      }, 60000);
-      return () => clearInterval(timer);
-    }
-  }, [clockStatus]);
-
   const handleToggleClock = async () => {
-    setClockLoading(true);
-    try {
-      const action = clockStatus.isClockedIn ? 'CLOCK_OUT' : 'CLOCK_IN';
-      const res = await fetch('/api/timeclock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action,
-          shiftType: role === 'MEDICO' || role === 'ENFERMERO' ? 'GUARDIA' : 'CONSULTORIO',
-        }),
-      });
-      if (res.ok) {
-        await fetchClockStatus();
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setClockLoading(false);
+    if (isClockedIn) {
+      await clockOut();
+    } else {
+      const shiftType = role === 'MEDICO' || role === 'ENFERMERO' ? 'GUARDIA' : 'CONSULTORIO';
+      await clockIn(shiftType);
     }
   };
 
@@ -97,12 +51,6 @@ export default function Header() {
     ENFERMERO: { badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', text: 'Enfermero' },
     RECEPCION: { badge: 'bg-amber-100 text-amber-800 border-amber-200', text: 'Recepción' },
     FARMACIA: { badge: 'bg-rose-100 text-rose-800 border-rose-200', text: 'Farmacia & Stock' },
-  };
-
-  const formatElapsed = (minutes: number) => {
-    const hrs = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hrs}h ${mins.toString().padStart(2, '0')}m`;
   };
 
   return (
@@ -124,7 +72,7 @@ export default function Header() {
       <div className="flex items-center space-x-3">
         {/* Fichaje de Personal (Clock-in / Clock-out) */}
         <div className="flex items-center">
-          {clockStatus.isClockedIn ? (
+          {isClockedIn ? (
             <div className="flex items-center space-x-2 bg-emerald-50 border border-emerald-300 rounded-lg p-1 px-2.5">
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider flex items-center">
@@ -132,28 +80,28 @@ export default function Header() {
                   En Turno
                 </span>
                 <span className="text-xs font-semibold text-emerald-900 font-mono">
-                  {formatElapsed(elapsedMinutes)}
+                  {formattedElapsed}
                 </span>
               </div>
               <button
                 onClick={handleToggleClock}
                 disabled={clockLoading}
-                className="flex items-center space-x-1 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-2.5 py-1.5 rounded-md transition shadow-xs cursor-pointer"
+                className="flex items-center space-x-1 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-2.5 py-1.5 rounded-md transition shadow-xs cursor-pointer disabled:opacity-50"
                 title="Registrar salida de turno"
               >
                 <Square className="w-3.5 h-3.5 fill-current" />
-                <span className="hidden md:inline">Fichar Salida</span>
+                <span className="hidden md:inline">{clockLoading ? 'Procesando...' : 'Fichar Salida'}</span>
               </button>
             </div>
           ) : (
             <button
               onClick={handleToggleClock}
               disabled={clockLoading}
-              className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-xs cursor-pointer"
+              className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-xs cursor-pointer disabled:opacity-50"
               title="Registrar ingreso de guardia o consultorio"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Fichar Entrada</span>
+              <span>{clockLoading ? 'Procesando...' : 'Fichar Entrada'}</span>
             </button>
           )}
         </div>

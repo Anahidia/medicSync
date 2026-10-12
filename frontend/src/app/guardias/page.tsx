@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { useTimeclock } from '@/context/TimeclockContext';
 import {
   Clock,
   ShieldCheck,
@@ -18,20 +19,18 @@ import { formatDateTime, formatTime, formatDate } from '@/lib/utils';
 
 export default function GuardiasPage() {
   const { user, role } = useAuth();
+  const {
+    isClockedIn,
+    activeEntry,
+    recentEntries,
+    activeStaff,
+    clockLoading,
+    formattedElapsed,
+    clockIn,
+    clockOut,
+  } = useTimeclock();
   const [shifts, setShifts] = useState<any[]>([]);
   const [staff, setStaff] = useState<any[]>([]);
-  const [clockData, setClockData] = useState<{
-    isClockedIn: boolean;
-    activeEntry?: any;
-    recentEntries?: any[];
-    activeStaff?: any[];
-  }>({
-    isClockedIn: false,
-    recentEntries: [],
-    activeStaff: [],
-  });
-
-  const [clockLoading, setClockLoading] = useState(false);
   const [clockNotes, setClockNotes] = useState('');
   const [shiftType, setShiftType] = useState('GUARDIA');
 
@@ -58,47 +57,25 @@ export default function GuardiasPage() {
     }
   };
 
-  const fetchClockData = async () => {
-    try {
-      const res = await fetch('/api/timeclock');
-      if (res.ok) {
-        const data = await res.json();
-        setClockData(data);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
   useEffect(() => {
     fetchShifts();
-    fetchClockData();
   }, [user]);
 
   const handleToggleClock = async (action: 'CLOCK_IN' | 'CLOCK_OUT') => {
-    setClockLoading(true);
-    try {
-      const res = await fetch('/api/timeclock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action,
-          shiftType,
-          notes: clockNotes,
-        }),
-      });
-
-      if (res.ok) {
+    if (action === 'CLOCK_IN') {
+      const res = await clockIn(shiftType, clockNotes);
+      if (res.success) {
         setClockNotes('');
-        await fetchClockData();
-      } else {
-        const err = await res.json();
-        alert(err.error || 'Error al procesar fichada');
+      } else if (res.error) {
+        alert(res.error);
       }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setClockLoading(false);
+    } else {
+      const res = await clockOut(clockNotes);
+      if (res.success) {
+        setClockNotes('');
+      } else if (res.error) {
+        alert(res.error);
+      }
     }
   };
 
@@ -166,11 +143,16 @@ export default function GuardiasPage() {
           </div>
 
           <div>
-            {clockData.isClockedIn ? (
-              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold px-3 py-1 rounded-full text-xs flex items-center">
-                <span className="w-2 h-2 rounded-full bg-emerald-600 mr-2 animate-ping"></span>
-                Jornada Activa (Fichado)
-              </span>
+            {isClockedIn ? (
+              <div className="flex items-center gap-2">
+                <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold px-3 py-1 rounded-full text-xs flex items-center">
+                  <span className="w-2 h-2 rounded-full bg-emerald-600 mr-2 animate-ping"></span>
+                  Jornada Activa (Fichado)
+                </span>
+                <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-bold px-2.5 py-1 rounded-full text-xs flex items-center shadow-2xs">
+                  ⏱️ {formattedElapsed}
+                </span>
+              </div>
             ) : (
               <span className="bg-slate-100 text-slate-600 font-bold px-3 py-1 rounded-full text-xs">
                 Fuera de Turno
@@ -186,7 +168,7 @@ export default function GuardiasPage() {
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Tipo de Servicio / Destino</label>
                 <select
-                  disabled={clockData.isClockedIn}
+                  disabled={isClockedIn}
                   value={shiftType}
                   onChange={(e) => setShiftType(e.target.value)}
                   className="w-full border border-slate-300 rounded-lg p-2 bg-white focus:ring-2 focus:ring-sky-500 disabled:bg-slate-100"
@@ -210,12 +192,12 @@ export default function GuardiasPage() {
               </div>
             </div>
 
-            <div className="pt-2 flex items-center space-x-3">
-              {clockData.isClockedIn ? (
+            <div className="pt-2 flex flex-col sm:flex-row sm:items-center gap-3">
+              {isClockedIn ? (
                 <button
                   onClick={() => handleToggleClock('CLOCK_OUT')}
                   disabled={clockLoading}
-                  className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-xs transition flex items-center space-x-2 cursor-pointer"
+                  className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-xs transition flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
                 >
                   <Square className="w-4 h-4 fill-current" />
                   <span>{clockLoading ? 'Procesando...' : 'Fichar SALIDA de Turno'}</span>
@@ -224,17 +206,20 @@ export default function GuardiasPage() {
                 <button
                   onClick={() => handleToggleClock('CLOCK_IN')}
                   disabled={clockLoading}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-xs transition flex items-center space-x-2 cursor-pointer"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-xs transition flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
                 >
                   <Play className="w-4 h-4 fill-current" />
                   <span>{clockLoading ? 'Procesando...' : 'Fichar ENTRADA al Turno'}</span>
                 </button>
               )}
 
-              {clockData.activeEntry && (
-                <span className="text-xs text-slate-500 font-mono">
-                  Ingreso registrado: {formatDateTime(clockData.activeEntry.clockIn)}
-                </span>
+              {activeEntry && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-mono">
+                  <span>Ingreso registrado: {formatDateTime(activeEntry.clockIn)}</span>
+                  <span className="bg-slate-100 text-emerald-700 font-bold px-2 py-0.5 rounded border border-slate-200">
+                    Tiempo en turno: {formattedElapsed}
+                  </span>
+                </div>
               )}
             </div>
           </div>
@@ -243,11 +228,11 @@ export default function GuardiasPage() {
           <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 text-xs">
             <span className="font-bold text-slate-800 flex items-center mb-2">
               <Users className="w-4 h-4 text-sky-600 mr-1.5" />
-              Personal en Turno ({clockData.activeStaff?.length || 0})
+              Personal en Turno ({activeStaff?.length || 0})
             </span>
             <div className="space-y-1.5 max-h-36 overflow-y-auto">
-              {clockData.activeStaff && clockData.activeStaff.length > 0 ? (
-                clockData.activeStaff.map((s: any) => (
+              {activeStaff && activeStaff.length > 0 ? (
+                activeStaff.map((s: any) => (
                   <div key={s.id} className="flex items-center justify-between py-1 border-b border-slate-100 last:border-0">
                     <div>
                       <span className="font-semibold text-slate-800 block">{s.user.name}</span>
@@ -343,8 +328,8 @@ export default function GuardiasPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {clockData.recentEntries && clockData.recentEntries.length > 0 ? (
-                clockData.recentEntries.map((entry: any) => (
+              {recentEntries && recentEntries.length > 0 ? (
+                recentEntries.map((entry: any) => (
                   <tr key={entry.id} className="hover:bg-slate-50/50">
                     <td className="py-2.5 px-3 font-semibold text-slate-800">
                       {entry.user.name} ({entry.user.role})

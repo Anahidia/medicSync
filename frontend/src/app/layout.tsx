@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AuthProvider } from '@/context/AuthContext';
+import { TimeclockProvider } from '@/context/TimeclockContext';
 import AppShell from '@/components/layout/AppShell';
 
 export const metadata: Metadata = {
@@ -17,7 +18,9 @@ export default function RootLayout({
     <html lang="es" className="h-full antialiased">
       <body className="min-h-full bg-slate-50 text-slate-900 font-sans">
         <AuthProvider>
-          <AppShell>{children}</AppShell>
+          <TimeclockProvider>
+            <AppShell>{children}</AppShell>
+          </TimeclockProvider>
         </AuthProvider>
       </body>
     </html>
